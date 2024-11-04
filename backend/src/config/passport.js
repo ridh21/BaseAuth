@@ -16,92 +16,63 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: 'http://localhost:8000/api/auth/google/callback',
+      scope: ['profile', 'email']
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        let user = await prisma.user.findUnique({ 
-          where: { googleId: profile.id } 
+        let user = await prisma.user.findUnique({
+          where: { email: profile.emails[0].value }
         });
-
+        
         if (!user) {
           user = await prisma.user.create({
             data: {
-              googleId: profile.id,
-              email: profile.emails[0].value,
               username: profile.displayName,
-              emailVerified: true
-            },
+              email: profile.emails[0].value,
+              googleId: profile.id,
+
+              emailVerified: true,
+              password: null
+            }
           });
         }
-
-        console.log('JWT_SECRET:', JWT_SECRET); // Verify secret is available
-        const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-        console.log('Generated Token:', token); // Verify token generation
-
-        return done(null, { user, token });
+        
+        return done(null, user);
       } catch (error) {
-        console.error('Token Generation Error:', error);
-        return done(error);
+        return done(error, null);
       }
     }
   )
 );
+
 passport.use(
   new GitHubStrategy(
     {
       clientID: process.env.GITHUB_CLIENT_ID,
       clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      callbackURL: "http://localhost:8000/api/auth/github/callback",
+      callbackURL: 'http://localhost:8000/api/auth/github/callback',
+      scope: ['user:email']
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        // First try to find user by githubId
         let user = await prisma.user.findUnique({
-          where: { githubId: profile.id.toString() },
+          where: { githubId: profile.id }
         });
-
+        
         if (!user) {
-          // Get email safely
-          const email =
-            profile.emails && profile.emails[0]
-              ? profile.emails[0].value
-              : `${profile.username}@github.com`;
-
-          // Check if user exists with this email
-          user = await prisma.user.findUnique({
-            where: { email },
+          user = await prisma.user.create({
+            data: {
+              username: profile.username,
+              email: profile.emails[0].value,
+              githubId: profile.id,
+              isVerified: true
+            }
           });
-
-          if (user) {
-            // Update existing user with githubId
-            user = await prisma.user.update({
-              where: { id: user.id },
-              data: { githubId: profile.id.toString() },
-            });
-          } else {
-            // Create new user
-            user = await prisma.user.create({
-              data: {
-                githubId: profile.id.toString(),
-                username: profile.username,
-                email: email,
-                emailVerified: true,
-              },
-            });
-          }
         }
-
-        const token = jwt.sign(
-          {
-            userId: user.id,
-            email: user.email,
-            username: user.username,
-          },
-          JWT_SECRET,
-          { expiresIn: "24h" }
-        );
+        
+        return done(null, user);
       } catch (error) {
-        return done(error);
+        return done(error, null);
       }
     }
   )
@@ -110,6 +81,11 @@ passport.use(
 passport.serializeUser((user, done) => {
   done(null, user);
 });
-passport.deserializeUser((user, done) => {
-  done(null, user);
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (error) {
+    done(error, null);
+  }
 });
